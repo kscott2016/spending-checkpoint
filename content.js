@@ -1,41 +1,75 @@
-// content.js — using Option B: find the biggest price on the page
+// content.js — Robust Keyword-Based Total Detection
 
-// 1. Only run on likely checkout/cart pages
+//See if we are on a checkout page; too many variations in URL, need other approach
 //if (window.location.href.includes("checkout") || window.location.href.includes("cart")) {
-    // 2. Get all visible text from the page
-    const pageText = document.body.innerText;
 
-    // 3. Find every text fragment that looks like "$12.34"
-    const priceRegex = /\$\s?\d+(\.\d{2})?/g;
-    const matches = Array.from(pageText.matchAll(priceRegex));
+    //Get every element in the body
+    const allElements = Array.from(document.querySelectorAll("body *"));
 
-    if (matches.length > 0) {
-        // 4. Turn each match into a number (strip "$" and spaces)
-        const prices = matches.map(m => parseFloat(m[0].replace(/[^0-9.]/g, "")));
+    //Define key word matching pattern using Regex for variations of total
+    const keywordRegex = /(grand total|order total|estimated total|est\.?\s?total|subtotal|sub total|final total|final price|total due|total amount|amount due|amount to pay|due today|checkout total|payment total|item total|estimate|total)/i;
 
-        // 5. Pick the biggest one
-        const maxPrice = Math.max(...prices);
-        const total = `$${maxPrice.toFixed(2)}`;
+    //Define a pattern for matching text or elements that might be the price using regex
+    const priceRegex = /(\$|USD)?\s?\d{1,5}(\.\d{2})?/;
 
-        // 6. Send it to the background script
-        chrome.runtime.sendMessage({ type: "CHECKOUT_TOTAL", total });
+    //This list stores every element that might be our total price
+    let candidates = [];
 
-        // 7. Optional: show a small popup overlay for testing
+    //Loop through every element in the body
+    allElements.forEach(el => {
+        const text = el.textContent.trim(); //change to text
+
+        //Check if element contains both price and text for total
+        if (keywordRegex.test(text) && priceRegex.test(text)) {
+
+            const priceMatch = text.match(priceRegex)[0];
+            const price = parseFloat(priceMatch.replace(/[^0-9.]/g, ""));
+
+            let score = 0;
+
+            if (/grand total/i.test(text)) score += 5;
+            if (/estimated total|est\.?\s?total/i.test(text)) score += 4;
+            if (/order total/i.test(text)) score += 3;
+            if (/final total|final price/i.test(text)) score += 3;
+            if (/subtotal|sub total/i.test(text)) score += 1;
+            if (/total/i.test(text)) score += 1;
+
+            score += price / 100;
+
+            candidates.push({ el, text, price, score });
+        }
+    });
+
+    if (candidates.length > 0) {
+
+        candidates.sort((a, b) => b.score - a.score);
+        const best = candidates[0];
+        const total = best.price.toFixed(2);
+
+        console.log("Matched Total Candidates: ", candidates);
+        console.log("Selected Total Element: ", best.text);
+
         const popup = document.createElement("div");
-        popup.innerText = `💸 You’re about to spend ${total}`;
+        popup.innerText = `💰 Detected total: $${total}`;
         popup.style.cssText = `
       position:fixed;
       bottom:20px; right:20px;
-      background:#fff;
-      border:2px solid #3b82f6;
       padding:12px 16px;
+      background:#fff;
+      border:2px solid #34d399;
       border-radius:8px;
       font-weight:bold;
-      box-shadow:0 0 10px rgba(0,0,0,0.1);
+      color:#111;
       z-index:999999;
-      color:#333;
+      box-shadow:0 2px 10px rgba(0,0,0,0.15);
     `;
         document.body.appendChild(popup);
         setTimeout(() => popup.remove(), 6000);
+
+        if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+            chrome.runtime.sendMessage({ type: "CHECKOUT_TOTAL", total: `$${total}` });
+        }
+    } else {
+        console.log("❌ No total price candidates found.");
     }
 //}
